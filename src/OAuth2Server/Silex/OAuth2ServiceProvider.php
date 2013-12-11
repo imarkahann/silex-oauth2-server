@@ -2,15 +2,15 @@
 
 namespace OAuth2Server\Silex;
 
-use OAuth2Server\ScopeManager;
-use OAuth2Server\SessionManager;
-use OAuth2Server\ClientManager;
-use OAuth2\AuthServer;
-use OAuth2\ResourceServer;
-use OAuth2\Grant\Password as PasswordGrantType;
-use OAuth2\Grant\AuthCode as AuthCodeGrantType;
-use OAuth2\Grant\ClientCredentials as ClientCredentialsGrantType;
-use OAuth2\Grant\RefreshToken as RefreshTokenGrantType;
+use OAuth2Server\Storage\ScopeStore;
+use OAuth2Server\Storage\SessionStore;
+use OAuth2Server\Storage\ClientStore;
+use League\OAuth2\Server\Authorization;
+use League\OAuth2\Server\Resource;
+use League\OAuth2\Server\Grant\Password as PasswordGrantType;
+use League\OAuth2\Server\Grant\AuthCode as AuthCodeGrantType;
+use League\OAuth2\Server\Grant\ClientCredentials as ClientCredentialsGrantType;
+use League\OAuth2\Server\Grant\RefreshToken as RefreshTokenGrantType;
 use Silex\Application;
 use Silex\ServiceProviderInterface;
 use \RuntimeException;
@@ -29,23 +29,23 @@ class OAuth2ServiceProvider implements ServiceProviderInterface
     public function register(Application $app)
     {
         $app['oauth2.session_manager'] = $app->share(function() use ($app) {
-            return new SessionManager($app['db']);
+            return new SessionStore($app['db']);
         });
 
         $app['oauth2.client_manager'] = $app->share(function() use ($app) {
-            return new ClientManager($app['db']);
+            return new ClientStore($app['db']);
         });
 
         $app['oauth2.scope_manager'] = $app->share(function() use ($app) {
-            return new ScopeManager($app['db']);
+            return new ScopeStore($app['db']);
         });
 
         $app['oauth2.resource_server'] = $app->share(function() use ($app) {
-            return new ResourceServer($app['oauth2.session_manager']);
+            return new Resource($app['oauth2.session_manager']);
         });
 
         $app['oauth2.auth_server'] = $app->share(function() use ($app) {
-            $authServer = new AuthServer($app['oauth2.client_manager'], $app['oauth2.session_manager'], $app['oauth2.scope_manager']);
+            $authServer = new Authorization($app['oauth2.client_manager'], $app['oauth2.session_manager'], $app['oauth2.scope_manager']);
 
             $options = isset($app['oauth2.options']) ? $app['oauth2.options'] : array();
 
@@ -58,21 +58,22 @@ class OAuth2ServiceProvider implements ServiceProviderInterface
                 foreach ($app['oauth2.options']['grant_types'] as $type) {
                     switch ($type) {
                         case 'authorization_code':
-                            $authServer->addGrantType(new AuthCodeGrantType());
+                            $authServer->addGrantType(new AuthCodeGrantType($authServer));
                             break;
                         case 'client_credentials':
-                            $authServer->addGrantType(new ClientCredentialsGrantType());
+                            $authServer->addGrantType(new ClientCredentialsGrantType($authServer));
                             break;
                         case 'password':
                             if (!is_callable($options['password_verify_callback'])) {
                                 throw new RuntimeException('To use the OAuth2 "password" grant type, the "password_verify_callback" option must be set to a callback function.');
                             }
-                            $grantType = new PasswordGrantType();
+                            $grantType = new PasswordGrantType($authServer);
                             $grantType->setVerifyCredentialsCallback($options['password_verify_callback']);
                             $authServer->addGrantType($grantType);
+
                             break;
                         case 'refresh_token':
-                            $authServer->addGrantType(new RefreshTokenGrantType());
+                            $authServer->addGrantType(new RefreshTokenGrantType($authServer));
                             break;
                         default:
                             throw new RuntimeException('Invalid grant type "' . $type . '" specified in oauth2.options.');
